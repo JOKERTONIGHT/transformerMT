@@ -15,13 +15,18 @@ MT/
 │   ├── int2word_en.json    # 英文索引到词的映射
 │   └── int2word_cn.json    # 中文索引到词的映射
 ├── models/                 # 保存训练好的模型
-├── config.py               # 配置文件
-├── dataset.py              # 数据加载和处理
-├── transformer_model.py    # Transformer模型定义
-├── trainer.py              # 模型训练与评估
-├── evaluate.py             # BLEU评估工具
-├── preprocess.py           # 数据预处理脚本
-├── main.py                 # 主程序入口
+├── plots/                  # 训练过程可视化图表
+├── src/                    # 源代码目录
+│   ├── config.py           # 配置文件
+│   ├── dataset.py          # 数据加载和处理
+│   ├── evaluate.py         # BLEU评估工具
+│   ├── preprocess.py       # 数据预处理脚本
+│   ├── trainer.py          # 模型训练与评估
+│   ├── transformer_model.py # Transformer模型定义
+│   └── translator.py       # 翻译器类，用于加载模型和执行翻译
+├── main.py                 # 主程序入口（训练、测试、批量翻译）
+├── demo.py                 # 交互式翻译演示
+├── compare_params.py       # 不同参数配置比较工具
 └── README.md               # 项目说明
 ```
 
@@ -32,54 +37,113 @@ MT/
 - NLTK 3.5+
 - NumPy
 - tqdm
+- matplotlib
 
 ## 安装依赖
 
 ```bash
-pip install torch nltk numpy tqdm
+pip install torch nltk numpy tqdm matplotlib
 ```
 
-## 使用方法
+## 功能介绍
 
 ### 1. 数据预处理
 
 如果您要使用自己的数据，可以使用预处理脚本进行处理：
 
 ```bash
-python preprocess.py --raw_data path/to/parallel/corpus.txt --output_dir ./data
+python src/preprocess.py --raw_data path/to/parallel/corpus.txt --output_dir ./data
 ```
 
 注意：原始数据应为平行语料，每行包含一对英文和中文句子，以制表符（\t）分隔。
 
 ### 2. 训练模型
 
+使用 `main.py` 进行模型训练：
+
 ```bash
-python main.py --mode train
+python main.py --mode train --run_name experiment1
 ```
 
-训练过程会自动保存最佳模型（根据验证集BLEU分数）到models目录。
+参数说明:
+- `--mode`: 操作模式，设为 `train` 进行训练
+- `--run_name`: 训练任务名称，用于区分不同参数的训练结果
 
 ### 3. 测试模型
 
+使用 `main.py` 在测试集上评估模型:
+
 ```bash
-python main.py --mode test
+python main.py --mode test --model_path ./models/best_model_bleu.pt
 ```
 
-这将在测试集上评估模型，并计算BLEU分数。
+参数说明:
+- `--mode`: 操作模式，设为 `test` 进行测试
+- `--model_path`: 可选，指定要评估的模型路径
 
 ### 4. 翻译文本
 
-翻译单个句子：
+#### 交互式翻译
+
+使用 `demo.py` 进行交互式翻译:
+
+```bash
+python demo.py --model ./models/best_model_bleu.pt
+```
+
+参数说明:
+- `--model`: 可选，指定要使用的模型路径
+
+#### 批量翻译
+
+使用 `main.py` 进行批量翻译:
+
+```bash
+python main.py --mode translate --input_file ./data/input.txt --output_file ./outputs/output.txt
+```
+
+参数说明:
+- `--mode`: 操作模式，设为 `translate` 进行翻译
+- `--input_file`: 输入文件路径
+- `--output_file`: 输出文件路径
+- `--model_path`: 可选，指定要使用的模型路径
+
+也可以翻译单个句子：
 
 ```bash
 python main.py --mode translate --input_text "This is a test sentence."
 ```
 
-翻译整个文件：
+### 5. 参数对比实验
+
+使用 `compare_params.py` 比较不同参数配置的训练效果:
 
 ```bash
-python main.py --mode translate --input_file input.txt --output_file output.txt
+# 使用不同参数进行训练
+python compare_params.py --mode train
+
+# 比较已有的训练结果
+python compare_params.py --mode compare --run_names baseline large_model small_model
 ```
+
+参数说明:
+- `--mode`: 运行模式，`train` 进行多组参数训练，`compare` 比较已有训练结果
+- `--run_names`: 要比较的训练任务名称列表
+- `--metrics`: 要比较的指标，可选 `bleu`, `train_loss`, `val_loss`, `learning_rate`
+
+## 训练可视化
+
+训练过程会自动生成以下图表，保存在 `plots` 目录:
+
+1. 训练和验证损失曲线
+2. BLEU分数变化曲线
+3. 学习率变化曲线
+
+这些图表可以帮助您:
+- 监控模型训练过程
+- 诊断过拟合或欠拟合问题
+- 比较不同参数配置的效果
+- 选择最佳模型
 
 ## 模型架构
 
@@ -94,7 +158,10 @@ python main.py --mode translate --input_file input.txt --output_file output.txt
 
 ## 性能评估
 
-使用BLEU（Bilingual Evaluation Understudy）作为主要评估指标，计算模型生成的翻译与参考翻译之间的相似度。
+使用BLEU（Bilingual Evaluation Understudy，范围0~1，本项目使用百分数表示，结果范围为0~100）作为主要评估指标，计算模型生成的翻译与参考翻译之间的相似度。
+
+- 初始模型测试集分数 21.05
+- 添加平滑处理，表现有所下降；认为数据集制约了模型性能进一步提升
 
 ## 参考资料
 

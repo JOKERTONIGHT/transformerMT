@@ -1,15 +1,23 @@
+"""
+Model Training and Evaluation Module
+"""
 import torch
 import torch.nn as nn
 import torch.optim as optim
 import json
 import os
 import time
-from torch.utils.data import DataLoader
+import matplotlib.pyplot as plt
 import numpy as np
+from torch.utils.data import DataLoader
 from nltk.translate.bleu_score import corpus_bleu
 
-from transformer_model import Transformer
-from dataset import get_dataloader, get_vocab_size
+# Configure matplotlib for non-interactive use
+plt.rcParams['font.sans-serif'] = ['DejaVu Sans']
+plt.rcParams['axes.unicode_minus'] = False
+
+from src.transformer_model import Transformer
+from src.dataset import get_dataloader, get_vocab_size
 
 
 class Trainer:
@@ -89,10 +97,27 @@ class Trainer:
         # 创建保存模型的目录
         if not os.path.exists(config['model_save_dir']):
             os.makedirs(config['model_save_dir'])
+        
+        # 创建保存图表的目录
+        self.plots_dir = os.path.join(os.path.dirname(config['model_save_dir']), 'plots')
+        if not os.path.exists(self.plots_dir):
+            os.makedirs(self.plots_dir)
+            
+        # 训练历史记录
+        self.history = {
+            'train_loss': [],
+            'val_loss': [],
+            'bleu': [],
+            'learning_rate': []
+        }
     
     def train_epoch(self, epoch):
         self.model.train()
         total_loss = 0
+        steps = len(self.train_loader)
+        
+        # 添加进度条
+        print(f"Epoch {epoch}/{self.config['epochs']} - Training...")
         
         for i, batch in enumerate(self.train_loader):
             src = batch['src'].to(self.device)
@@ -119,11 +144,16 @@ class Trainer:
             
             total_loss += loss.item()
             
-            if (i + 1) % 50 == 0:
-                print(f"Epoch {epoch}, Step {i+1}/{len(self.train_loader)}, Loss: {loss.item():.4f}")
+            # 打印进度
+            if (i + 1) % 50 == 0 or (i + 1) == steps:
+                print(f"Epoch {epoch}, Step {i+1}/{steps}, Loss: {loss.item():.4f}, Progress: {(i+1)/steps*100:.1f}%")
         
         avg_loss = total_loss / len(self.train_loader)
-        print(f"Epoch {epoch}, Train average loss: {avg_loss:.4f}")
+        print(f"Epoch {epoch}, Average training loss: {avg_loss:.4f}")
+        
+        # 记录当前学习率
+        current_lr = self.optimizer.param_groups[0]['lr']
+        self.history['learning_rate'].append(current_lr)
         
         return avg_loss
     
@@ -227,9 +257,16 @@ class Trainer:
         
         return bleu_score
     
-    def train(self):
+    def train(self, run_name='default'):
+        """Train the model
+
+        Args:
+            run_name: Run name, used for saving charts and records
+        """
         best_val_loss = float('inf')
         best_bleu = 0
+        
+        print(f"Starting training task '{run_name}'...")
         
         for epoch in range(1, self.config['epochs'] + 1):
             start_time = time.time()
@@ -243,32 +280,49 @@ class Trainer:
             # 计算BLEU分数
             bleu = self.calculate_bleu(self.val_loader)
             
+            # 记录指标
+            self.history['train_loss'].append(train_loss)
+            self.history['val_loss'].append(val_loss)
+            self.history['bleu'].append(bleu)
+            
             # 学习率调整
             self.scheduler.step(val_loss)
             
             # 保存最佳模型
             if val_loss < best_val_loss:
                 best_val_loss = val_loss
-                torch.save(self.model.state_dict(), os.path.join(self.config['model_save_dir'], 'best_model_loss.pt'))
-                print("Saved best model (loss)!")
+                torch.save(self.model.state_dict(), os.path.join(self.config['model_save_dir'], f'{run_name}_best_model_loss.pt'))
+                print("Saved model with lowest loss!")
             
             if bleu > best_bleu:
                 best_bleu = bleu
-                torch.save(self.model.state_dict(), os.path.join(self.config['model_save_dir'], 'best_model_bleu.pt'))
-                print("Saved best model (BLEU)!")
+                torch.save(self.model.state_dict(), os.path.join(self.config['model_save_dir'], f'{run_name}_best_model_bleu.pt'))
+                print("Saved model with highest BLEU!")
+            
+            # 每个epoch结束绘制一次图表
+            self.plot_history(run_name)
             
             end_time = time.time()
             epoch_mins, epoch_secs = divmod(end_time - start_time, 60)
             
             print(f"Epoch {epoch} completed in {epoch_mins}m {epoch_secs:.2f}s")
             print(f"Train Loss: {train_loss:.4f}, Val Loss: {val_loss:.4f}, BLEU: {bleu:.2f}")
-            print("---------------------------------------------------")
+            print("=" * 60)
         
         # 保存最终模型
-        torch.save(self.model.state_dict(), os.path.join(self.config['model_save_dir'], 'final_model.pt'))
+        torch.save(self.model.state_dict(), os.path.join(self.config['model_save_dir'], f'{run_name}_final_model.pt'))
+        print(f"Training completed! Final model saved. Best BLEU: {best_bleu:.2f}, Best Val Loss: {best_val_loss:.4f}")
         
-    def test(self, test_loader=None):
-        """在测试集上评估模型"""
+    def test(self, test_loader=None, model_path=None):
+        """Evaluate model on test set
+        
+        Args:
+            test_loader: Test data loader, created if None
+            model_path: Model path, uses best BLEU model if None
+            
+        Returns:
+            bleu_score: BLEU score on test set
+        """
         if test_loader is None:
             test_loader = get_dataloader(
                 file_path=self.config['test_file'],
@@ -279,14 +333,72 @@ class Trainer:
                 max_length=self.config['max_length']
             )
         
-        # 加载最佳模型
+        # 加载模型
+        if model_path is None:
+            model_path = os.path.join(self.config['model_save_dir'], 'best_model_bleu.pt')
+            
         try:
-            self.model.load_state_dict(torch.load(os.path.join(self.config['model_save_dir'], 'best_model_bleu.pt')))
-            print("Loaded best model based on BLEU score.")
-        except:
-            print("Could not load best model, using current model.")
+            self.model.load_state_dict(torch.load(model_path, map_location=self.device))
+            print(f"Loaded model: {model_path}")
+        except Exception as e:
+            print(f"Failed to load model: {e}")
+            print("Using current model...")
         
         # 计算测试集上的BLEU分数
         bleu_score = self.calculate_bleu(test_loader)
         
         return bleu_score
+    
+    def plot_history(self, run_name='default'):
+        """Plot training history charts
+        
+        Args:
+            run_name: Run name, used for saving charts
+        """
+        epochs = list(range(1, len(self.history['train_loss']) + 1))
+        
+        # 创建图表目录
+        if not os.path.exists(self.plots_dir):
+            os.makedirs(self.plots_dir)
+        
+        # 绘制损失曲线
+        plt.figure(figsize=(10, 5))
+        plt.plot(epochs, self.history['train_loss'], 'b-', label='Training Loss')
+        plt.plot(epochs, self.history['val_loss'], 'r-', label='Validation Loss')
+        plt.xlabel('Epoch')
+        plt.ylabel('Loss')
+        plt.title('Training and Validation Loss')
+        plt.legend()
+        plt.grid(True)
+        plt.savefig(os.path.join(self.plots_dir, f'{run_name}_loss_curve.png'))
+        plt.close()  # 关闭图表释放资源
+        
+        # 绘制BLEU分数曲线
+        plt.figure(figsize=(10, 5))
+        plt.plot(epochs, self.history['bleu'], 'g-', label='BLEU Score')
+        plt.xlabel('Epoch')
+        plt.ylabel('BLEU')
+        plt.title('Validation BLEU Score')
+        plt.legend()
+        plt.grid(True)
+        plt.savefig(os.path.join(self.plots_dir, f'{run_name}_bleu_curve.png'))
+        plt.close()  # 关闭图表释放资源
+        
+        # 绘制学习率变化曲线
+        plt.figure(figsize=(10, 5))
+        plt.plot(epochs, self.history['learning_rate'], 'm-', label='Learning Rate')
+        plt.xlabel('Epoch')
+        plt.ylabel('Learning Rate')
+        plt.title('Learning Rate Changes')
+        plt.legend()
+        plt.grid(True)
+        plt.yscale('log')
+        plt.savefig(os.path.join(self.plots_dir, f'{run_name}_lr_curve.png'))
+        plt.close()  # 关闭图表释放资源
+        
+        # 保存训练历史数据
+        history_path = os.path.join(self.plots_dir, f'{run_name}_history.json')
+        with open(history_path, 'w') as f:
+            json.dump(self.history, f)
+            
+        print(f"Training history plots saved to {self.plots_dir}")

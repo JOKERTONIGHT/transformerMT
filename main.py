@@ -1,16 +1,26 @@
+"""
+English-Chinese Machine Translation System Entry Point
+For training models, evaluating performance and batch translation
+"""
 import argparse
 import os
+import sys
 import torch
 import json
-from trainer import Trainer
-from dataset import get_dataloader
-from config import config
-from evaluate import evaluate_translations
 import nltk
+
+# 添加src目录到路径
+sys.path.append(os.path.join(os.path.dirname(__file__), 'src'))
+
+from src.trainer import Trainer
+from src.translator import Translator
+from src.dataset import get_dataloader
+from src.config import config
+from src.evaluate import evaluate_translations
 
 
 def download_nltk_resources():
-    """下载NLTK资源"""
+    """Download NLTK resources"""
     try:
         nltk.data.find('tokenizers/punkt')
     except LookupError:
@@ -18,32 +28,38 @@ def download_nltk_resources():
 
 
 def create_directories():
-    """创建必要的目录"""
+    """Create necessary directories"""
     os.makedirs(config['model_save_dir'], exist_ok=True)
     os.makedirs('outputs', exist_ok=True)
 
 
-def train_model():
-    """训练模型"""
-    print("Starting model training...")
+def train_model(run_name='default'):
+    """Train the model
+    
+    Args:
+        run_name: The name of the training run, used for saving models and charts
+    """
+    print(f"Starting model training '{run_name}'...")
     trainer = Trainer(config)
-    trainer.train()
+    trainer.train(run_name)
     print("Training completed!")
 
 
-def test_model():
-    """测试模型"""
+def test_model(model_path=None):
+    """Test the model
+    
+    Args:
+        model_path: Path to the model to test, uses the best BLEU model if None
+    
+    Returns:
+        bleu_score: BLEU score on the test set
+    """
     print("Testing model...")
     trainer = Trainer(config)
     
-    # 加载最佳模型
-    best_model_path = os.path.join(config['model_save_dir'], 'best_model_bleu.pt')
-    
-    if os.path.exists(best_model_path):
-        trainer.model.load_state_dict(torch.load(best_model_path))
-        print(f"Loaded best model from {best_model_path}")
-    else:
-        print("Best model not found, using current model.")
+    # 如果未指定模型路径，使用默认最佳模型
+    if model_path is None:
+        model_path = os.path.join(config['model_save_dir'], 'best_model_bleu.pt')
     
     # 加载测试数据集
     test_loader = get_dataloader(
@@ -56,102 +72,61 @@ def test_model():
     )
     
     # 计算BLEU分数
-    bleu_score = trainer.calculate_bleu(test_loader)
-    print(f"Test BLEU score: {bleu_score:.2f}")
+    bleu_score = trainer.test(test_loader, model_path)
+    print(f"Test set BLEU score: {bleu_score:.2f}")
     
     return bleu_score
 
 
-def translate(input_text=None, input_file=None, output_file=None):
-    """使用模型进行翻译"""
+def translate(input_text=None, input_file=None, output_file=None, model_path=None):
+    """Translate text using the model
     
-    # 加载词汇表
-    with open(config['src_word2int_path'], 'r', encoding='utf-8') as f:
-        src_word2int = json.load(f)
+    Args:
+        input_text: Single text to translate
+        input_file: Path to file containing texts to translate
+        output_file: Path for output translation results
+        model_path: Model path, defaults to best BLEU model
     
-    with open(config['tgt_int2word_path'], 'r', encoding='utf-8') as f:
-        tgt_int2word = json.load(f)
+    Returns:
+        Translation result string if translating a single sentence
+    """
+    # 加载翻译器
+    translator = Translator(config)
+    
+    # 如果未指定模型路径，使用默认最佳模型
+    if model_path is None:
+        model_path = os.path.join(config['model_save_dir'], 'best_model_bleu.pt')
     
     # 加载模型
-    trainer = Trainer(config)
-    best_model_path = os.path.join(config['model_save_dir'], 'best_model_bleu.pt')
-    
-    if os.path.exists(best_model_path):
-        trainer.model.load_state_dict(torch.load(best_model_path))
-        print(f"Loaded best model from {best_model_path}")
+    if os.path.exists(model_path):
+        translator.load_model(model_path)
     else:
-        print("Best model not found, using current model.")
-    
-    trainer.model.eval()
-    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+        print(f"Model not found: {model_path}")
+        return None
     
     if input_text:
-        # 将输入文本转换为token id
-        tokens = []
-        for word in input_text.strip().split():
-            if word in src_word2int:
-                tokens.append(src_word2int[word])
-            else:
-                tokens.append(config['unk_idx'])
-        
-        # 转换为tensor并预测
-        src_tensor = torch.tensor([tokens], dtype=torch.long).to(device)
-        pred_tensor = trainer.translate_sentence(src_tensor)
-        
-        # 将预测结果转换为文本
-        pred_text = []
-        for idx in pred_tensor[0].tolist():
-            if idx == config['eos_idx']:
-                break
-            if idx != config['bos_idx'] and idx != config['pad_idx']:
-                pred_text.append(tgt_int2word.get(str(idx), "UNK"))
-        
-        # 返回翻译结果
-        result = ' '.join(pred_text)
-        print(f"Source: {input_text}")
-        print(f"Translation: {result}")
-        
+        # 单句翻译
+        result = translator.translate(input_text)
+        print(f"Source text: {input_text}")
+        print(f"Translation result: {result}")
         return result
     
     elif input_file and output_file:
-        with open(input_file, 'r', encoding='utf-8') as f_in, \
-             open(output_file, 'w', encoding='utf-8') as f_out:
-            for line in f_in:
-                if line.strip():
-                    # 将输入文本转换为token id
-                    tokens = []
-                    for word in line.strip().split():
-                        if word in src_word2int:
-                            tokens.append(src_word2int[word])
-                        else:
-                            tokens.append(config['unk_idx'])
-                    
-                    # 转换为tensor并预测
-                    src_tensor = torch.tensor([tokens], dtype=torch.long).to(device)
-                    pred_tensor = trainer.translate_sentence(src_tensor)
-                    
-                    # 将预测结果转换为文本
-                    pred_text = []
-                    for idx in pred_tensor[0].tolist():
-                        if idx == config['eos_idx']:
-                            break
-                        if idx != config['bos_idx'] and idx != config['pad_idx']:
-                            pred_text.append(tgt_int2word.get(str(idx), "UNK"))
-                    
-                    # 写入翻译结果
-                    result = ' '.join(pred_text)
-                    f_out.write(result + '\n')
-        
-        print(f"Translated {input_file} to {output_file}")
+        # 批量翻译
+        translator.batch_translate(input_file, output_file)
+        print(f"Batch translation completed: {input_file} -> {output_file}")
 
 
 def main():
-    parser = argparse.ArgumentParser(description='Neural Machine Translation with Transformer')
+    parser = argparse.ArgumentParser(description='Transformer-based English-Chinese Machine Translation System')
     parser.add_argument('--mode', choices=['train', 'test', 'translate'], default='train',
-                       help='运行模式 (train, test, translate)')
-    parser.add_argument('--input_text', type=str, help='待翻译的文本')
-    parser.add_argument('--input_file', type=str, help='待翻译的文件')
-    parser.add_argument('--output_file', type=str, help='翻译结果输出文件')
+                       help='Running mode (train, test, translate)')
+    parser.add_argument('--run_name', type=str, default='default',
+                       help='Training run name, used to distinguish results with different parameters')
+    parser.add_argument('--input_text', type=str, help='Text to translate')
+    parser.add_argument('--input_file', type=str, help='File to translate')
+    parser.add_argument('--output_file', type=str, help='Output file for translation results')
+    parser.add_argument('--model_path', type=str, help='Specify model path to load')
     
     args = parser.parse_args()
     
@@ -162,16 +137,17 @@ def main():
     create_directories()
     
     if args.mode == 'train':
-        train_model()
+        train_model(args.run_name)
     elif args.mode == 'test':
-        test_model()
+        test_model(args.model_path)
     elif args.mode == 'translate':
         if args.input_text:
-            translate(input_text=args.input_text)
+            translate(input_text=args.input_text, model_path=args.model_path)
         elif args.input_file and args.output_file:
-            translate(input_file=args.input_file, output_file=args.output_file)
+            translate(input_file=args.input_file, output_file=args.output_file, 
+                     model_path=args.model_path)
         else:
-            print("请提供待翻译的文本或文件路径")
+            print("Please provide text or file path to translate")
 
 
 if __name__ == '__main__':

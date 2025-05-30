@@ -1,7 +1,7 @@
 import os
 
 # 基础路径
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))  # 指向MT根目录
 DATA_DIR = os.path.join(BASE_DIR, 'data')
 MODEL_SAVE_DIR = os.path.join(BASE_DIR, 'models')
 
