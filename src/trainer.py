@@ -10,7 +10,7 @@ import time
 import matplotlib.pyplot as plt
 import numpy as np
 from torch.utils.data import DataLoader
-from nltk.translate.bleu_score import corpus_bleu
+from nltk.translate.bleu_score import corpus_bleu, SmoothingFunction
 
 # Configure matplotlib for non-interactive use
 plt.rcParams['font.sans-serif'] = ['DejaVu Sans']
@@ -107,7 +107,10 @@ class Trainer:
         self.history = {
             'train_loss': [],
             'val_loss': [],
-            'bleu': [],
+            'bleu1': [],
+            'bleu2': [],
+            'bleu3': [],
+            'bleu4': [],
             'learning_rate': []
         }
     
@@ -214,6 +217,12 @@ class Trainer:
         return ys
     
     def calculate_bleu(self, loader):
+        """
+        计算BLEU-1到BLEU-4分数，并使用平滑来防止BLEU分数为零
+        
+        Returns:
+            tuple: (bleu1, bleu2, bleu3, bleu4) 包含所有BLEU分数
+        """
         self.model.eval()
         references = []
         candidates = []
@@ -251,11 +260,23 @@ class Trainer:
                 references.extend(tgt_text)
                 candidates.extend(pred_text)
         
-        # 计算BLEU分数
-        bleu_score = corpus_bleu(references, candidates) * 100
-        print(f"BLEU score: {bleu_score:.2f}")
+        # 使用平滑方法计算BLEU分数
+        smoothing = SmoothingFunction().method1
         
-        return bleu_score
+        # 计算BLEU-1到BLEU-4分数
+        bleu1 = corpus_bleu(references, candidates, weights=(1, 0, 0, 0), smoothing_function=smoothing) * 100
+        bleu2 = corpus_bleu(references, candidates, weights=(0.5, 0.5, 0, 0), smoothing_function=smoothing) * 100
+        bleu3 = corpus_bleu(references, candidates, weights=(0.33, 0.33, 0.34, 0), smoothing_function=smoothing) * 100
+        bleu4 = corpus_bleu(references, candidates, weights=(0.25, 0.25, 0.25, 0.25), smoothing_function=smoothing) * 100
+        
+        # 输出各项BLEU分数
+        print(f"BLEU-1: {bleu1:.2f}")
+        print(f"BLEU-2: {bleu2:.2f}")
+        print(f"BLEU-3: {bleu3:.2f}")
+        print(f"BLEU-4: {bleu4:.2f}")
+        
+        # 返回所有BLEU分数
+        return bleu1, bleu2, bleu3, bleu4
     
     def train(self, run_name='default'):
         """Train the model
@@ -277,13 +298,20 @@ class Trainer:
             # 在验证集上评估
             val_loss = self.evaluate()
             
-            # 计算BLEU分数
-            bleu = self.calculate_bleu(self.val_loader)
+            # 计算BLEU分数（此方法已更新以返回多个BLEU分数）
+            bleu_results = self.calculate_bleu(self.val_loader)
+            bleu4 = bleu_results  # calculate_bleu 现在返回 BLEU-4 作为主要指标
+            
+            # 获取分数
+            bleu1, bleu2, bleu3, bleu4 = bleu_results
             
             # 记录指标
             self.history['train_loss'].append(train_loss)
             self.history['val_loss'].append(val_loss)
-            self.history['bleu'].append(bleu)
+            self.history['bleu1'].append(bleu1)
+            self.history['bleu2'].append(bleu2)
+            self.history['bleu3'].append(bleu3)
+            self.history['bleu4'].append(bleu4)
             
             # 学习率调整
             self.scheduler.step(val_loss)
@@ -294,10 +322,10 @@ class Trainer:
                 torch.save(self.model.state_dict(), os.path.join(self.config['model_save_dir'], f'{run_name}_best_model_loss.pt'))
                 print("Saved model with lowest loss!")
             
-            if bleu > best_bleu:
-                best_bleu = bleu
+            if bleu4 > best_bleu:
+                best_bleu = bleu4
                 torch.save(self.model.state_dict(), os.path.join(self.config['model_save_dir'], f'{run_name}_best_model_bleu.pt'))
-                print("Saved model with highest BLEU!")
+                print("Saved model with highest BLEU-4!")
             
             # 每个epoch结束绘制一次图表
             self.plot_history(run_name)
@@ -306,12 +334,12 @@ class Trainer:
             epoch_mins, epoch_secs = divmod(end_time - start_time, 60)
             
             print(f"Epoch {epoch} completed in {epoch_mins}m {epoch_secs:.2f}s")
-            print(f"Train Loss: {train_loss:.4f}, Val Loss: {val_loss:.4f}, BLEU: {bleu:.2f}")
+            print(f"Train Loss: {train_loss:.4f}, Val Loss: {val_loss:.4f}, BLEU-4: {bleu4:.2f}")
             print("=" * 60)
         
         # 保存最终模型
         torch.save(self.model.state_dict(), os.path.join(self.config['model_save_dir'], f'{run_name}_final_model.pt'))
-        print(f"Training completed! Final model saved. Best BLEU: {best_bleu:.2f}, Best Val Loss: {best_val_loss:.4f}")
+        print(f"Training completed! Final model saved. Best BLEU-4: {best_bleu:.2f}, Best Val Loss: {best_val_loss:.4f}")
         
     def test(self, test_loader=None, model_path=None):
         """Evaluate model on test set
@@ -345,9 +373,10 @@ class Trainer:
             print("Using current model...")
         
         # 计算测试集上的BLEU分数
-        bleu_score = self.calculate_bleu(test_loader)
+        bleu1, bleu2, bleu3, bleu4 = self.calculate_bleu(test_loader)
         
-        return bleu_score
+        # 返回BLEU-4作为主要评估指标
+        return bleu4
     
     def plot_history(self, run_name='default'):
         """Plot training history charts
@@ -373,12 +402,12 @@ class Trainer:
         plt.savefig(os.path.join(self.plots_dir, f'{run_name}_loss_curve.png'))
         plt.close()  # 关闭图表释放资源
         
-        # 绘制BLEU分数曲线
+        # 绘制BLEU-4分数曲线
         plt.figure(figsize=(10, 5))
-        plt.plot(epochs, self.history['bleu'], 'g-', label='BLEU Score')
+        plt.plot(epochs, self.history['bleu4'], 'g-', label='BLEU-4 Score')
         plt.xlabel('Epoch')
-        plt.ylabel('BLEU')
-        plt.title('Validation BLEU Score')
+        plt.ylabel('BLEU-4')
+        plt.title('Validation BLEU-4 Score')
         plt.legend()
         plt.grid(True)
         plt.savefig(os.path.join(self.plots_dir, f'{run_name}_bleu_curve.png'))

@@ -39,7 +39,7 @@ config = {
     # 训练参数
     'batch_size': 64,        # 批大小
     'learning_rate': 0.0001, # 学习率
-    'epochs': 20,            # 训练轮数
+    'epochs': 30,            # 训练轮数
     'clip': 1.0,             # 梯度裁剪
     'patience': 5,           # 早停耐心值
 }
