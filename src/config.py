@@ -27,7 +27,7 @@ config = {
     'num_encoder_layers': 6, # 编码器层数
     'num_decoder_layers': 6, # 解码器层数
     'dim_feedforward': 2048, # 前馈网络维度
-    'dropout': 0.1,          # dropout比例
+    'dropout': 0.05,          # dropout比例
     'max_length': 100,       # 最大序列长度
     
     # 特殊token索引

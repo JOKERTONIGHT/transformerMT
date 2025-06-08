@@ -46,28 +46,49 @@ def compare_train_histories(run_names, labels, metric='bleu'):
     Args:
         run_names: List of run names
         labels: List of labels for each run
-        metric: Metric to compare ('bleu', 'train_loss', 'val_loss', 'learning_rate')
+        metric: Metric to compare ('bleu', 'bleu4', 'train_loss', 'val_loss', 'learning_rate')
     """
     plt.figure(figsize=(12, 6))
+    
+    # Track the actual metric used for consistent labeling
+    display_metric = metric
     
     for run_name, label in zip(run_names, labels):
         history = load_history(run_name)
         if history is None:
             continue
         
-        epochs = list(range(1, len(history[metric]) + 1))
-        plt.plot(epochs, history[metric], '-o', label=label)
+        # Handle different metric names
+        actual_metric = metric
+        if metric == 'bleu' and 'bleu' not in history:
+            # If 'bleu' is requested but not available, try 'bleu4' as default
+            if 'bleu4' in history:
+                actual_metric = 'bleu4'
+                display_metric = 'bleu4'  # Update display metric for consistent labeling
+            else:
+                print(f"Warning: Neither 'bleu' nor 'bleu4' found in history for {run_name}. Available metrics: {list(history.keys())}")
+                continue
+        elif actual_metric not in history:
+            print(f"Warning: Metric '{actual_metric}' not found in history for {run_name}. Available metrics: {list(history.keys())}")
+            continue
+        
+        epochs = list(range(1, len(history[actual_metric]) + 1))
+        plt.plot(epochs, history[actual_metric], '-o', label=label)
     
     metric_labels = {
         'bleu': 'BLEU Score',
+        'bleu1': 'BLEU-1 Score',
+        'bleu2': 'BLEU-2 Score', 
+        'bleu3': 'BLEU-3 Score',
+        'bleu4': 'BLEU-4 Score',
         'train_loss': 'Training Loss',
         'val_loss': 'Validation Loss',
         'learning_rate': 'Learning Rate'
     }
     
     plt.xlabel('Epoch')
-    plt.ylabel(metric_labels.get(metric, metric))
-    plt.title(f'Comparison of {metric_labels.get(metric, metric)} with Different Parameters')
+    plt.ylabel(metric_labels.get(display_metric, display_metric))
+    plt.title(f'Comparison of {metric_labels.get(display_metric, display_metric)} with Different Parameters')
     plt.grid(True)
     plt.legend()
     
@@ -76,9 +97,9 @@ def compare_train_histories(run_names, labels, metric='bleu'):
         os.makedirs(plots_dir)
     
     comparison_name = '_'.join(run_names)
-    plt.savefig(os.path.join(plots_dir, f'compare_{metric}_{comparison_name}.png'))
+    plt.savefig(os.path.join(plots_dir, f'compare_{display_metric}_{comparison_name}.png'))
     plt.close()  # Close figure to release resources
-    print(f"Saved comparison chart: compare_{metric}_{comparison_name}.png")
+    print(f"Saved comparison chart: compare_{display_metric}_{comparison_name}.png")
 
 
 def compare_multiple_metrics(run_names, labels, metrics=None):
@@ -90,7 +111,7 @@ def compare_multiple_metrics(run_names, labels, metrics=None):
         metrics: List of metrics to compare
     """
     if metrics is None:
-        metrics = ['bleu', 'train_loss', 'val_loss']
+        metrics = ['bleu4', 'train_loss', 'val_loss']
     
     for metric in metrics:
         compare_train_histories(run_names, labels, metric)
@@ -149,7 +170,7 @@ def main():
                        help='Running mode (train: train with different parameters, compare: compare existing models)')
     parser.add_argument('--run_names', type=str, nargs='+', 
                        help='List of run names to compare (only used in compare mode)')
-    parser.add_argument('--metrics', type=str, nargs='+', default=['bleu', 'train_loss', 'val_loss'],
+    parser.add_argument('--metrics', type=str, nargs='+', default=['bleu4', 'train_loss', 'val_loss'],
                        help='List of metrics to compare')
     
     args = parser.parse_args()
