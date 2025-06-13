@@ -1,6 +1,6 @@
-# 基于Transformer的英中机器翻译系统
+# 基于Transformer的机器翻译系统
 
-这是一个基于PyTorch实现的Transformer模型的神经机器翻译（NMT）系统，用于将英文翻译为中文。
+这是一个基于PyTorch实现的Transformer模型的机器翻译（NMT）系统，用于将英文翻译为中文。
 
 ## 项目结构
 
